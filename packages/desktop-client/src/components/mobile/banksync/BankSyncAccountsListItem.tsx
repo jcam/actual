@@ -11,7 +11,7 @@ import { useLocale } from '#hooks/useLocale';
 
 type BankSyncAccountsListItemProps = {
   account: AccountEntity;
-  onAction: (account: AccountEntity, action: 'link' | 'edit') => void;
+  onAction: (account: AccountEntity, action: 'link' | 'edit' | 'sync') => void;
   isLinked: boolean;
 };
 
@@ -21,12 +21,14 @@ export function BankSyncAccountsListItem({
   isLinked,
 }: BankSyncAccountsListItemProps) {
   const locale = useLocale();
+  const isExternal = account.account_sync_source === 'external';
 
-  const lastSyncString = isLinked
-    ? tsToRelativeTime(account.last_sync, locale, {
-        capitalize: true,
-      })
-    : null;
+  const lastSyncString =
+    isLinked && account.last_sync
+      ? tsToRelativeTime(account.last_sync, locale, {
+          capitalize: true,
+        })
+      : null;
 
   return (
     <View
@@ -40,7 +42,9 @@ export function BankSyncAccountsListItem({
         width: '100%',
         cursor: 'pointer',
       }}
-      onClick={() => onAction(account, isLinked ? 'edit' : 'link')}
+      onClick={() =>
+        onAction(account, isLinked ? (isExternal ? 'sync' : 'edit') : 'link')
+      }
     >
       <SpaceBetween gap={60}>
         <SpaceBetween
@@ -92,7 +96,15 @@ export function BankSyncAccountsListItem({
             flexShrink: 0,
           }}
         >
-          {isLinked ? <Trans>Edit</Trans> : <Trans>Link account</Trans>}
+          {isLinked ? (
+            isExternal ? (
+              <Trans>Sync now</Trans>
+            ) : (
+              <Trans>Edit</Trans>
+            )
+          ) : (
+            <Trans>Link account</Trans>
+          )}
         </span>
       </SpaceBetween>
     </View>

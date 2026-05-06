@@ -2,6 +2,8 @@
 import * as asyncStorage from '#platform/server/asyncStorage';
 import * as db from '#server/db';
 import { loadMappings } from '#server/db/mappings';
+import * as request from '#server/post';
+import { setServer } from '#server/server-config';
 
 import { app } from './app';
 import * as bankSync from './sync';
@@ -10,6 +12,11 @@ vi.mock('./sync', async () => ({
   ...(await vi.importActual('./sync')),
   simpleFinBatchSync: vi.fn(),
   syncAccount: vi.fn(),
+}));
+
+vi.mock('#server/post', async () => ({
+  ...(await vi.importActual('#server/post')),
+  post: vi.fn(),
 }));
 
 const simpleFinBatchSyncHandler = app.handlers['simplefin-batch-sync'];
@@ -47,6 +54,8 @@ beforeEach(async () => {
     'user-id': 'user-1',
     'user-key': 'key-1',
   });
+  vi.mocked(asyncStorage.getItem).mockResolvedValue('test-token');
+  setServer('https://sync.example.com');
   await global.emptyDatabase()();
   await loadMappings();
 });
@@ -143,7 +152,7 @@ describe('simpleFinBatchSync', () => {
 });
 
 describe('accountsBankSync', () => {
-  it('skips externally linked accounts', async () => {
+  it('syncs externally linked accounts through the external bridge', async () => {
     insertBank({ id: 'bank1', bank_id: 'external:bank-1', name: 'External' });
     await db.insertAccount({
       id: 'acct-external',
@@ -152,15 +161,32 @@ describe('accountsBankSync', () => {
       account_id: 'external-account-1',
       account_sync_source: 'external',
     });
+    vi.mocked(request.post).mockResolvedValue({
+      newTransactions: ['txn-1'],
+      matchedTransactions: ['txn-2'],
+      updatedAccounts: ['acct-external'],
+      lastSync: '1717000000000',
+    });
 
     const result = await accountsBankSyncHandler({ ids: ['acct-external'] });
+    const account = await db.first<db.DbAccount>(
+      'SELECT * FROM accounts WHERE id = ?',
+      ['acct-external'],
+    );
 
     expect(bankSync.syncAccount).not.toHaveBeenCalled();
+    expect(request.post).toHaveBeenCalledWith(
+      'https://sync.example.com/external-sync/sync',
+      { accountId: 'acct-external' },
+      { 'X-ACTUAL-TOKEN': 'test-token' },
+      60000,
+    );
     expect(result).toEqual({
       errors: [],
-      newTransactions: [],
-      matchedTransactions: [],
-      updatedAccounts: [],
+      newTransactions: ['txn-1'],
+      matchedTransactions: ['txn-2'],
+      updatedAccounts: ['acct-external'],
     });
+    expect(account?.last_sync).toBe('1717000000000');
   });
 });

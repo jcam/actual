@@ -1,13 +1,26 @@
 // @ts-strict-ignore
+import * as asyncStorage from '#platform/server/asyncStorage';
 import * as db from '#server/db';
 import { loadMappings } from '#server/db/mappings';
+import * as request from '#server/post';
+import { setServer } from '#server/server-config';
 
 import { app } from './app';
 
 const linkExternalSyncAccount = app.handlers['account-external-sync-link'];
 const unlinkExternalSyncAccount = app.handlers['account-external-sync-unlink'];
+const externalStatus = app.handlers['external-status'];
+const externalSync = app.handlers['external-sync'];
+
+vi.mock('#server/post', async () => ({
+  ...(await vi.importActual('#server/post')),
+  post: vi.fn(),
+}));
 
 beforeEach(async () => {
+  vi.resetAllMocks();
+  vi.mocked(asyncStorage.getItem).mockResolvedValue('test-token');
+  setServer('https://sync.example.com');
   await global.emptyDatabase()();
   await loadMappings();
 });
@@ -99,5 +112,68 @@ describe('external account sync metadata', () => {
       official_name: 'Checking Account',
       last_sync: '1715000000000',
     });
+  });
+
+  it('returns external sync provider status', async () => {
+    vi.mocked(request.post).mockResolvedValue({
+      configured: true,
+      state: 'ok',
+      message: null,
+      lastSync: '1718000000000',
+      canSync: true,
+      needsReauth: false,
+    });
+
+    const status = await externalStatus({ accountId: 'acct1' });
+
+    expect(request.post).toHaveBeenCalledWith(
+      'https://sync.example.com/external-sync/status',
+      { accountId: 'acct1' },
+      { 'X-ACTUAL-TOKEN': 'test-token' },
+      60000,
+    );
+    expect(status).toEqual({
+      configured: true,
+      state: 'ok',
+      message: null,
+      lastSync: '1718000000000',
+      canSync: true,
+      needsReauth: false,
+    });
+  });
+
+  it('runs external sync and updates last_sync metadata', async () => {
+    await db.insertWithUUID('banks', {
+      id: 'bank1',
+      bank_id: 'external:institution-1',
+      name: 'External Credit Union',
+    });
+    await db.insertAccount({
+      id: 'acct1',
+      name: 'Checking',
+      account_id: 'provider-acct-1',
+      bank: 'bank1',
+      account_sync_source: 'external',
+    });
+    vi.mocked(request.post).mockResolvedValue({
+      newTransactions: ['txn-1'],
+      matchedTransactions: ['txn-2'],
+      updatedAccounts: ['acct1'],
+      lastSync: '1719000000000',
+    });
+
+    const result = await externalSync({ accountId: 'acct1' });
+    const account = await db.first<db.DbAccount>(
+      'SELECT * FROM accounts WHERE id = ?',
+      ['acct1'],
+    );
+
+    expect(result).toEqual({
+      errors: [],
+      newTransactions: ['txn-1'],
+      matchedTransactions: ['txn-2'],
+      updatedAccounts: ['acct1'],
+    });
+    expect(account?.last_sync).toBe('1719000000000');
   });
 });

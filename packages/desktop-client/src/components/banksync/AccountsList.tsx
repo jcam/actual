@@ -11,7 +11,7 @@ type AccountsListProps = {
   accounts: AccountEntity[];
   hoveredAccount?: string | null;
   onHover: (id: AccountEntity['id'] | null) => void;
-  onAction: (account: AccountEntity, action: 'link' | 'edit') => void;
+  onAction: (account: AccountEntity, action: 'link' | 'edit' | 'sync') => void;
 };
 
 export function AccountsList({

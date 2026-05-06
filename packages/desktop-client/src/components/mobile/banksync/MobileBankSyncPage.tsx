@@ -7,6 +7,7 @@ import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import type { AccountEntity } from '@actual-app/core/types/models';
 
+import { useSyncAccountsMutation } from '#accounts';
 import {
   getGroupedBankSyncEntries,
   getSyncSourceReadable,
@@ -27,6 +28,7 @@ export function MobileBankSyncPage() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { data: accounts = [] } = useAccounts();
+  const syncAccounts = useSyncAccountsMutation();
   const [filter, setFilter] = useState('');
   const syncSourceReadable = useMemo(() => getSyncSourceReadable(t), [t]);
 
@@ -63,10 +65,13 @@ export function MobileBankSyncPage() {
   }, [groupedAccounts, filter]);
 
   const onAction = useCallback(
-    (account: AccountEntity, action: 'link' | 'edit') => {
+    (account: AccountEntity, action: 'link' | 'edit' | 'sync') => {
       switch (action) {
         case 'edit':
           void navigate(`/bank-sync/account/${account.id}/edit`);
+          break;
+        case 'sync':
+          void syncAccounts.mutateAsync({ id: account.id });
           break;
         case 'link':
           dispatch(
@@ -82,7 +87,7 @@ export function MobileBankSyncPage() {
           break;
       }
     },
-    [navigate, dispatch],
+    [navigate, dispatch, syncAccounts],
   );
 
   const onSearchChange = useCallback((value: string) => {

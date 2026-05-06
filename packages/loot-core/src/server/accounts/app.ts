@@ -24,6 +24,8 @@ import * as monthUtils from '#shared/months';
 import { amountToInteger } from '#shared/util';
 import type {
   ExternalSyncMetadataInput,
+  ExternalSyncResult,
+  ExternalSyncStatus,
   ImportTransactionsOpts,
 } from '#types/api-handlers';
 import type {
@@ -59,6 +61,8 @@ export type AccountHandlers = {
   'pluggyai-accounts-link': typeof linkPluggyAiAccount;
   'account-external-sync-link': typeof linkExternalSyncAccount;
   'account-external-sync-unlink': typeof unlinkExternalSyncAccount;
+  'external-status': typeof externalStatus;
+  'external-sync': typeof externalSync;
   'account-create': typeof createAccount;
   'account-close': typeof closeAccount;
   'account-reopen': typeof reopenAccount;
@@ -381,11 +385,11 @@ async function linkExternalSyncAccount({
   );
 
   if (!accRow) {
-    throw new Error(`Account with ID ${id} not found.`);
+    throw APIError('external-account-not-found');
   }
 
   if (metadata.syncSource !== 'external') {
-    throw new Error('Only the "external" sync source is supported.');
+    throw APIError('external-sync-source-invalid');
   }
 
   const bank = await link.findOrCreateExternalBank(
@@ -777,6 +781,63 @@ async function pluggyAiStatus() {
   );
 }
 
+async function externalStatus({
+  accountId,
+}: {
+  accountId?: AccountEntity['id'];
+} = {}): Promise<ExternalSyncStatus> {
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return {
+      configured: false,
+      state: 'error',
+      message: 'unauthorized',
+      lastSync: null,
+      canSync: false,
+      needsReauth: false,
+    };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  try {
+    const response = await post(
+      serverConfig.EXTERNAL_SYNC_SERVER + '/status',
+      accountId ? { accountId } : {},
+      {
+        'X-ACTUAL-TOKEN': userToken,
+      },
+      60000,
+    );
+
+    return {
+      configured: response.configured ?? false,
+      state: response.state ?? (response.configured ? 'ok' : 'not_configured'),
+      message: response.message ?? null,
+      lastSync: response.lastSync ?? null,
+      canSync: response.canSync ?? Boolean(response.configured),
+      needsReauth: response.needsReauth ?? false,
+    };
+  } catch (error) {
+    if (error instanceof PostError) {
+      return {
+        configured: false,
+        state: 'error',
+        message: error.reason,
+        lastSync: null,
+        canSync: false,
+        needsReauth: false,
+      };
+    }
+
+    throw error;
+  }
+}
+
 async function simpleFinAccounts() {
   const userToken = await asyncStorage.getItem('user-token');
 
@@ -891,6 +952,16 @@ type SyncResponse = {
   updatedAccounts: Array<AccountEntity['id']>;
 };
 
+type ExternalSyncBridgeResult = {
+  error_code?: string;
+  error_type?: string;
+  message?: string;
+  lastSync?: string | null;
+  newTransactions?: Array<TransactionEntity['id']>;
+  matchedTransactions?: Array<TransactionEntity['id']>;
+  updatedAccounts?: Array<AccountEntity['id']>;
+};
+
 async function handleSyncResponse(
   res: {
     added: Array<TransactionEntity['id']>;
@@ -995,6 +1066,92 @@ export type SyncResponseWithErrors = SyncResponse & {
   errors: SyncError[];
 };
 
+async function externalSync({
+  accountId,
+}: {
+  accountId: AccountEntity['id'];
+}): Promise<ExternalSyncResult> {
+  const acct = await db.first<db.DbAccount>(
+    'SELECT * FROM accounts WHERE id = ?',
+    [accountId],
+  );
+
+  if (!acct) {
+    throw APIError('external-account-not-found');
+  }
+
+  if (acct.account_sync_source !== 'external') {
+    throw APIError('external-account-not-linked');
+  }
+
+  const userToken = await asyncStorage.getItem('user-token');
+  const errors: ReturnType<typeof handleSyncError>[] = [];
+  const newTransactions: Array<TransactionEntity['id']> = [];
+  const matchedTransactions: Array<TransactionEntity['id']> = [];
+  const updatedAccounts: Array<AccountEntity['id']> = [];
+
+  if (!userToken) {
+    errors.push(handleSyncError(new PostError('unauthorized'), acct));
+    return { errors, newTransactions, matchedTransactions, updatedAccounts };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  try {
+    const res = (await post(
+      serverConfig.EXTERNAL_SYNC_SERVER + '/sync',
+      { accountId },
+      {
+        'X-ACTUAL-TOKEN': userToken,
+      },
+      60000,
+    )) as ExternalSyncBridgeResult;
+
+    if (res.error_code) {
+      errors.push(
+        handleSyncError(
+          {
+            type: 'BankSyncError',
+            reason: res.message || `Failed syncing account "${acct.name}."`,
+            category: res.error_type || 'EXTERNAL_SYNC',
+            code: res.error_code,
+          } as BankSyncError,
+          acct,
+        ),
+      );
+    } else {
+      const syncedAt = res.lastSync ?? new Date().getTime().toString();
+      const externallyUpdatedAccounts =
+        res.updatedAccounts ?? (res.newTransactions?.length ? [acct.id] : []);
+
+      await db.update('accounts', { id: acct.id, last_sync: syncedAt });
+
+      newTransactions.push(...(res.newTransactions ?? []));
+      matchedTransactions.push(...(res.matchedTransactions ?? []));
+      updatedAccounts.push(...externallyUpdatedAccounts);
+    }
+  } catch (err) {
+    const error = err as Error;
+    errors.push(handleSyncError(error, acct));
+    captureException({
+      ...error,
+      message: `Failed syncing external account "${acct.name}."`,
+    } as Error);
+  }
+
+  if (updatedAccounts.length > 0) {
+    connection.send('sync-event', {
+      type: 'success',
+      tables: ['transactions'],
+    });
+  }
+
+  return { errors, newTransactions, matchedTransactions, updatedAccounts };
+}
+
 async function accountsBankSync({
   ids = [],
 }: {
@@ -1023,6 +1180,12 @@ async function accountsBankSync({
 
   for (const acct of accounts) {
     if (acct.account_sync_source === 'external') {
+      const syncResponseData = await externalSync({ accountId: acct.id });
+
+      errors.push(...syncResponseData.errors);
+      newTransactions.push(...syncResponseData.newTransactions);
+      matchedTransactions.push(...syncResponseData.matchedTransactions);
+      updatedAccounts.push(...syncResponseData.updatedAccounts);
       continue;
     }
 
@@ -1330,11 +1493,11 @@ async function unlinkExternalSyncAccount({ id }: { id: AccountEntity['id'] }) {
   );
 
   if (!accRow) {
-    throw new Error(`Account with ID ${id} not found.`);
+    throw APIError('external-account-not-found');
   }
 
   if (accRow.account_sync_source !== 'external') {
-    throw new Error(`Account with ID ${id} is not externally linked.`);
+    throw APIError('external-account-not-linked');
   }
 
   await unlinkAccount({ id });
@@ -1363,11 +1526,13 @@ app.method('gocardless-poll-web-token-stop', stopGoCardlessWebTokenPolling);
 app.method('gocardless-status', goCardlessStatus);
 app.method('simplefin-status', simpleFinStatus);
 app.method('pluggyai-status', pluggyAiStatus);
+app.method('external-status', externalStatus);
 app.method('simplefin-accounts', simpleFinAccounts);
 app.method('pluggyai-accounts', pluggyAiAccounts);
 app.method('gocardless-get-banks', getGoCardlessBanks);
 app.method('gocardless-create-web-token', createGoCardlessWebToken);
 app.method('accounts-bank-sync', accountsBankSync);
 app.method('simplefin-batch-sync', simpleFinBatchSync);
+app.method('external-sync', externalSync);
 app.method('transactions-import', mutator(undoable(importTransactions)));
 app.method('account-unlink', mutator(unlinkAccount));

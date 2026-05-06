@@ -45,6 +45,29 @@ export type ExternalSyncMetadataInput = {
   lastSync?: string | null;
 };
 
+export type ExternalSyncStatus = {
+  configured: boolean;
+  state: 'ok' | 'syncing' | 'error' | 'reauth_required' | 'not_configured';
+  message?: string | null;
+  lastSync?: string | null;
+  canSync: boolean;
+  needsReauth: boolean;
+};
+
+export type ExternalSyncResult = {
+  errors: Array<{
+    accountId: string;
+    message: string;
+    type?: 'SyncError';
+    category?: string;
+    code?: string;
+    internal?: string;
+  }>;
+  newTransactions: string[];
+  matchedTransactions: string[];
+  updatedAccounts: string[];
+};
+
 export type ApiHandlers = {
   'api/batch-budget-start': () => Promise<void>;
 
@@ -167,6 +190,14 @@ export type ApiHandlers = {
   'api/account-external-sync-unlink': (arg: {
     id: APIAccountEntity['id'];
   }) => Promise<void>;
+
+  'api/external-sync-status': (arg?: {
+    accountId?: APIAccountEntity['id'];
+  }) => Promise<ExternalSyncStatus>;
+
+  'api/external-sync': (arg: {
+    accountId: APIAccountEntity['id'];
+  }) => Promise<ExternalSyncResult>;
 
   'api/account-close': (arg: {
     id: APIAccountEntity['id'];

@@ -7,9 +7,11 @@ import { Text } from '@actual-app/components/text';
 import { View } from '@actual-app/components/view';
 import type { AccountEntity } from '@actual-app/core/types/models';
 
+import { useSyncAccountsMutation } from '#accounts';
 import { MOBILE_NAV_HEIGHT } from '#components/mobile/MobileNavTabs';
 import { Page } from '#components/Page';
 import { useAccounts } from '#hooks/useAccounts';
+import { useExternalSyncStatus } from '#hooks/useExternalSyncStatus';
 import { useGlobalPref } from '#hooks/useGlobalPref';
 import { pushModal } from '#modals/modalsSlice';
 import { useDispatch } from '#redux';
@@ -22,6 +24,7 @@ import {
   groupBankSyncAccounts,
 } from './bankSyncUtils';
 import { BuiltInProviders } from './BuiltInProviders';
+import { ExternalProvider } from './ExternalProvider';
 import { useBuiltInBankSyncProviders } from './useBuiltInBankSyncProviders';
 
 export function BankSync() {
@@ -37,6 +40,14 @@ export function BankSync() {
     showPermissionWarning,
     providersNeedingConfiguration,
   } = useBuiltInBankSyncProviders();
+  const externalAccounts = useMemo(
+    () =>
+      accounts.filter(account => account.account_sync_source === 'external'),
+    [accounts],
+  );
+  const { status: externalStatus, isLoading: isExternalStatusLoading } =
+    useExternalSyncStatus();
+  const syncAccounts = useSyncAccountsMutation();
 
   const [hoveredAccount, setHoveredAccount] = useState<
     AccountEntity['id'] | null
@@ -55,7 +66,10 @@ export function BankSync() {
     [accounts],
   );
 
-  const onAction = async (account: AccountEntity, action: 'link' | 'edit') => {
+  const onAction = async (
+    account: AccountEntity,
+    action: 'link' | 'edit' | 'sync',
+  ) => {
     switch (action) {
       case 'edit':
         dispatch(
@@ -68,6 +82,9 @@ export function BankSync() {
             },
           }),
         );
+        break;
+      case 'sync':
+        void syncAccounts.mutateAsync({ id: account.id });
         break;
       case 'link':
         dispatch(
@@ -104,6 +121,16 @@ export function BankSync() {
           showPermissionWarning={showPermissionWarning}
           providersNeedingConfiguration={providersNeedingConfiguration}
         />
+
+        {(externalAccounts.length > 0 ||
+          externalStatus?.configured ||
+          isExternalStatusLoading) && (
+          <ExternalProvider
+            hasLinkedAccounts={externalAccounts.length > 0}
+            isLoading={isExternalStatusLoading}
+            status={externalStatus}
+          />
+        )}
 
         {openAccounts.length === 0 && (
           <Text style={{ fontSize: '1.1rem' }}>

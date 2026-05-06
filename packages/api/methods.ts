@@ -11,6 +11,7 @@ import { lib } from '@actual-app/core/server/main';
 import type { Query } from '@actual-app/core/shared/query';
 import type {
   ExternalSyncMetadataInput,
+  ExternalSyncResult,
   ImportTransactionsOpts,
 } from '@actual-app/core/types/api-handlers';
 import type { Handlers } from '@actual-app/core/types/handlers';
@@ -191,6 +192,19 @@ export function linkExternalSyncAccount(
 
 export function unlinkExternalSyncAccount(id: APIAccountEntity['id']) {
   return send('api/account-external-sync-unlink', { id });
+}
+
+export function getExternalSyncStatus(accountId?: APIAccountEntity['id']) {
+  return send(
+    'api/external-sync-status',
+    accountId ? { accountId } : undefined,
+  );
+}
+
+export function runExternalSync(
+  accountId: APIAccountEntity['id'],
+): Promise<ExternalSyncResult> {
+  return send('api/external-sync', { accountId });
 }
 
 export function closeAccount(

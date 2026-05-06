@@ -612,6 +612,14 @@ handlers['api/account-external-sync-unlink'] = withMutation(async function ({
   await handlers['account-external-sync-unlink']({ id });
 });
 
+handlers['api/external-sync-status'] = async function (args) {
+  return handlers['external-status'](args ?? {});
+};
+
+handlers['api/external-sync'] = async function ({ accountId }) {
+  return handlers['external-sync']({ accountId });
+};
+
 handlers['api/account-close'] = withMutation(async function ({
   id,
   transferAccountId,

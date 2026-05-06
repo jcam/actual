@@ -16,7 +16,7 @@ type AccountRowProps = {
   account: AccountEntity;
   hovered: boolean;
   onHover: (id: AccountEntity['id'] | null) => void;
-  onAction: (account: AccountEntity, action: 'link' | 'edit') => void;
+  onAction: (account: AccountEntity, action: 'link' | 'edit' | 'sync') => void;
   locale: Locale;
 };
 
@@ -42,6 +42,7 @@ export const AccountRow = memo(
       account.name.length > 30
         ? account.name.slice(0, 30) + '...'
         : account.name;
+    const isExternal = account.account_sync_source === 'external';
 
     return (
       <Row
@@ -112,8 +113,10 @@ export const AccountRow = memo(
 
         {account.account_sync_source ? (
           <Cell name="edit" plain style={{ paddingRight: '10px' }}>
-            <Button onPress={() => onAction(account, 'edit')}>
-              <Trans>Edit</Trans>
+            <Button
+              onPress={() => onAction(account, isExternal ? 'sync' : 'edit')}
+            >
+              {isExternal ? <Trans>Sync now</Trans> : <Trans>Edit</Trans>}
             </Button>
           </Cell>
         ) : (

@@ -17,7 +17,7 @@ import { BankSyncAccountsListItem } from './BankSyncAccountsListItem';
 type BankSyncAccountsListProps = {
   groupedAccounts: GroupedBankSyncAccounts;
   syncSourceReadable: Record<SyncProviders, string>;
-  onAction: (account: AccountEntity, action: 'link' | 'edit') => void;
+  onAction: (account: AccountEntity, action: 'link' | 'edit' | 'sync') => void;
 };
 
 export function BankSyncAccountsList({

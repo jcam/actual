@@ -33,4 +33,54 @@ describe('API handlers', () => {
       expect(getBankSyncError).toHaveBeenCalledWith('connection-failed');
     });
   });
+
+  describe('external sync APIs', () => {
+    it('should proxy external sync status requests', async () => {
+      handlers['external-status'] = vi.fn().mockResolvedValue({
+        configured: true,
+        state: 'ok',
+        message: null,
+        lastSync: null,
+        canSync: true,
+        needsReauth: false,
+      });
+
+      await expect(
+        handlers['api/external-sync-status']({ accountId: 'account1' }),
+      ).resolves.toEqual({
+        configured: true,
+        state: 'ok',
+        message: null,
+        lastSync: null,
+        canSync: true,
+        needsReauth: false,
+      });
+
+      expect(handlers['external-status']).toHaveBeenCalledWith({
+        accountId: 'account1',
+      });
+    });
+
+    it('should proxy external sync requests', async () => {
+      handlers['external-sync'] = vi.fn().mockResolvedValue({
+        errors: [],
+        newTransactions: ['txn-1'],
+        matchedTransactions: [],
+        updatedAccounts: ['account1'],
+      });
+
+      await expect(
+        handlers['api/external-sync']({ accountId: 'account1' }),
+      ).resolves.toEqual({
+        errors: [],
+        newTransactions: ['txn-1'],
+        matchedTransactions: [],
+        updatedAccounts: ['account1'],
+      });
+
+      expect(handlers['external-sync']).toHaveBeenCalledWith({
+        accountId: 'account1',
+      });
+    });
+  });
 });
